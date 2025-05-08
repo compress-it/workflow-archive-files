@@ -1,0 +1,214 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "actions": {
+      "Initialize_variable_archiveContent": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "archiveContent",
+              "type": "array",
+              "value": []
+            }
+          ]
+        },
+        "runAfter": {}
+      },
+      "Initialize_variable_folderMapping": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "folderMapping",
+              "type": "array",
+              "value": [
+                {
+                  "source": "/",
+                  "destination": "/"
+                },
+                {
+                  "source": "/Samples",
+                  "destination": "/"
+                }
+              ]
+            }
+          ]
+        },
+        "runAfter": {
+          "Initialize_variable_archiveContent": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "For_each_Source_Folder": {
+        "type": "Foreach",
+        "foreach": "@variables('folderMapping')",
+        "actions": {
+          "List_Source_files": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "folderId": "@items('For_each_Source_Folder')['source']"
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "AzureFile-2",
+                "operationId": "listFolder",
+                "serviceProviderId": "/serviceProviders/AzureFile"
+              }
+            }
+          },
+          "For_each_File": {
+            "type": "foreach",
+            "foreach": "@outputs('List_Source_files')?['body']",
+            "actions": {
+              "Condition": {
+                "type": "If",
+                "expression": {
+                  "and": [
+                    {
+                      "not": {
+                        "equals": [
+                          "@items('For_each_File')['IsFolder']",
+                          true
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "Get_file_content_(V2)": {
+                    "type": "ServiceProvider",
+                    "inputs": {
+                      "parameters": {
+                        "fileId": "@items('For_each_File')['path']",
+                        "inferContentType": true
+                      },
+                      "serviceProviderConfiguration": {
+                        "connectionName": "AzureFile-2",
+                        "operationId": "getFileContentV2",
+                        "serviceProviderId": "/serviceProviders/AzureFile"
+                      }
+                    }
+                  },
+                  "Append_to_array_variable": {
+                    "type": "AppendToArrayVariable",
+                    "inputs": {
+                      "name": "archiveContent",
+                      "value": "@outputs('Compose')"
+                    },
+                    "runAfter": {
+                      "Compose": [
+                        "SUCCEEDED"
+                      ]
+                    }
+                  },
+                  "Compose": {
+                    "type": "Compose",
+                    "inputs": {
+                      "filename": "@{items('For_each_File')['name']}",
+                      "fileContent": "@{base64(body('Get_file_content_(V2)'))}"
+                    },
+                    "runAfter": {
+                      "Get_file_content_(V2)": [
+                        "SUCCEEDED"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {}
+                }
+              }
+            },
+            "runAfter": {
+              "List_Source_files": [
+                "SUCCEEDED"
+              ]
+            }
+          }
+        },
+        "runAfter": {
+          "Initialize_variable_folderMapping": [
+            "SUCCEEDED"
+          ]
+        }
+      },
+      "Condition_Zip": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "not": {
+                "equals": [
+                  "@empty(variables('archiveContent'))",
+                  true
+                ]
+              }
+            }
+          ]
+        },
+        "actions": {
+          "Create_Zip_file": {
+            "type": "ServiceProvider",
+            "inputs": {
+              "parameters": {
+                "folderPath": "/",
+                "fileName": "archive.zip",
+                "fileContent": "@base64ToBinary(outputs('Execute_Zip_Compression')?['Body'])",
+                "overwrite": true
+              },
+              "serviceProviderConfiguration": {
+                "connectionName": "AzureFile-2",
+                "operationId": "createFile",
+                "serviceProviderId": "/serviceProviders/AzureFile"
+              }
+            },
+            "runAfter": {
+              "Execute_Zip_Compression": [
+                "SUCCEEDED"
+              ]
+            }
+          },
+          "Execute_Zip_Compression": {
+            "type": "CSharpScriptCode",
+            "inputs": {
+              "CodeFile": "execute_c__script_code.csx"
+            },
+            "runAfter": {
+              "Compose_archiveContent": [
+                "SUCCEEDED"
+              ]
+            }
+          },
+          "Compose_archiveContent": {
+            "type": "Compose",
+            "inputs": "@variables('archiveContent')"
+          }
+        },
+        "else": {
+          "actions": {}
+        },
+        "runAfter": {
+          "For_each_Source_Folder": [
+            "SUCCEEDED"
+          ]
+        }
+      }
+    },
+    "contentVersion": "1.0.0.0",
+    "outputs": {},
+    "triggers": {
+      "Recurrence": {
+        "type": "Recurrence",
+        "recurrence": {
+          "interval": 1,
+          "frequency": "Day",
+          "timeZone": "Eastern Standard Time",
+          "startTime": "12:00"
+        }
+      }
+    }
+  },
+  "kind": "Stateful"
+}
